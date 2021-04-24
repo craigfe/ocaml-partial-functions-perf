@@ -1,0 +1,56 @@
+#+TITLE: Testing performance of partial functions
+
+There are two common encodings of partial functions in OCaml:
+
+#+BEGIN_SRC ocaml
+val find_opt      : ('a, 'b) t -> 'a -> 'b option
+val find_exn      : ('a, 'b) t -> 'a -> 'b
+#+END_SRC
+
+The ~_opt~ variant is faster and type-safe, but allocates 2 words on the happy
+path, so one has to pick according to the use-case. It's possible to implement
+each one in terms of the other, but this has a performance cost (at least until
+Flambda saves us all) so one often ends up implementing both.
+
+Interestingly, there's a third member of this family, sometimes termed
+~_and_call~:
+
+#+BEGIN_SRC ocaml
+val find_and_call : ('a, 'b) t -> 'a -> some:('b -> 'c) -> none:(unit -> 'c) -> 'c
+#+END_SRC
+
+(This function uses the Scott encoding of the ~option~ type, which witnesses the
+isomorphism between algebraic types and continuations.) This form permits
+external implementations of both ~find_opt~ and ~find_exn~ that get some of the
+best of both worlds:
+
+#+BEGIN_SRC  ocaml
+let find_opt_indirect t k =
+  find_and_call ~some:Option.some ~none:(fun () -> None) t k
+
+let find_exn_indirect t k =
+  find_and_call ~some:Fun.id ~none:(fun () -> invalid_arg "find_exn") t k
+#+END_SRC 
+
+In particular, ~find_opt_indirect~ is faster than ~find_exn~, and
+~find_exn_indirect~ avoids the allocation of ~find_opt~. The question becomes,
+what's the absolute performance cost of this functional encoding?
+
+#+BEGIN_SRC
+╭────────────────────────────────┬───────────────────────────┬───────────────────────────╮
+│name                            │  minor-allocated          │  monotonic-clock          │
+├────────────────────────────────┼───────────────────────────┼───────────────────────────┤
+│  /find_exn            / false  │             4.4118 mnw/run│       17403912.6520 ns/run│
+│  /find_exn            / true   │             2.4194 mnw/run│        4506211.2355 ns/run│
+│  /find_exn (indirect) / false  │             5.0000 mnw/run│       19506350.6286 ns/run│
+│  /find_exn (indirect) / true   │             2.5862 mnw/run│        4976727.5695 ns/run│
+│  /find_opt            / false  │             2.2727 mnw/run│        4040805.1250 ns/run│
+│  /find_opt            / true   │       2000002.4194 mnw/run│        4187222.8435 ns/run│
+│  /find_opt (indirect) / false  │             2.7778 mnw/run│        5591670.8596 ns/run│
+│  /find_opt (indirect) / true   │       2000002.5862 mnw/run│        4970200.8325 ns/run│
+╰────────────────────────────────┴───────────────────────────┴───────────────────────────╯
+#+END_SRC
+
+Initial results: about 10% extra overhead, except for the ~_opt~ happy path
+which suffers about 40%. *TODO*: optimise these microbenchmarks and ensure I'm
+just measuring overhead, test out interactions with flambda inlining etc.

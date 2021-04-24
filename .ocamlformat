@@ -1,0 +1,5 @@
+version = 0.18.0
+profile = conventional
+
+margin = 90
+module-item-spacing = compact
